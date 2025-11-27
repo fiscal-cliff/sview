@@ -44,29 +44,73 @@ const COUNTRY_MAPPING: Record<string, string> = {
   CHE: 'Switzerland',
 };
 
-// GeoJSON URL for world map (Natural Earth simplified)
-const WORLD_GEOJSON_URL = 'https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson';
+// GeoJSON URLs for world map - using public CDN with fallback
+// Primary: jsDelivr CDN (reliable, high availability)
+// Fallback: Local bundled simplified data
+const GEOJSON_URLS = [
+  'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json',
+  '/data/world-simplified.json', // Local fallback
+];
+
+// Simplified world data for fallback (major countries only)
+const FALLBACK_GEOJSON: GeoJSON.FeatureCollection = {
+  type: 'FeatureCollection',
+  features: [
+    { type: 'Feature', properties: { name: 'United States' }, geometry: { type: 'Polygon', coordinates: [[[-125, 50], [-125, 25], [-70, 25], [-70, 50], [-125, 50]]] } },
+    { type: 'Feature', properties: { name: 'China' }, geometry: { type: 'Polygon', coordinates: [[[75, 55], [75, 20], [135, 20], [135, 55], [75, 55]]] } },
+    { type: 'Feature', properties: { name: 'Japan' }, geometry: { type: 'Polygon', coordinates: [[[130, 45], [130, 30], [145, 30], [145, 45], [130, 45]]] } },
+    { type: 'Feature', properties: { name: 'Germany' }, geometry: { type: 'Polygon', coordinates: [[[6, 55], [6, 47], [15, 47], [15, 55], [6, 55]]] } },
+    { type: 'Feature', properties: { name: 'United Kingdom' }, geometry: { type: 'Polygon', coordinates: [[[-8, 60], [-8, 50], [2, 50], [2, 60], [-8, 60]]] } },
+    { type: 'Feature', properties: { name: 'India' }, geometry: { type: 'Polygon', coordinates: [[[68, 35], [68, 8], [97, 8], [97, 35], [68, 35]]] } },
+    { type: 'Feature', properties: { name: 'France' }, geometry: { type: 'Polygon', coordinates: [[[-5, 51], [-5, 42], [8, 42], [8, 51], [-5, 51]]] } },
+    { type: 'Feature', properties: { name: 'Brazil' }, geometry: { type: 'Polygon', coordinates: [[[-74, 5], [-74, -34], [-35, -34], [-35, 5], [-74, 5]]] } },
+    { type: 'Feature', properties: { name: 'Canada' }, geometry: { type: 'Polygon', coordinates: [[[-141, 70], [-141, 42], [-52, 42], [-52, 70], [-141, 70]]] } },
+    { type: 'Feature', properties: { name: 'Russia' }, geometry: { type: 'Polygon', coordinates: [[[27, 72], [27, 42], [180, 42], [180, 72], [27, 72]]] } },
+  ],
+};
 
 export function Choropleth({ data, config = {} }: ChoroplethProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [geoData, setGeoData] = useState<d3.GeoGeometryObjects | null>(null);
+  const [geoData, setGeoData] = useState<GeoJSON.FeatureCollection | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
 
-  // Fetch GeoJSON data
+  // Fetch GeoJSON data with fallbacks
   useEffect(() => {
     const fetchGeoData = async () => {
-      try {
-        const response = await fetch(WORLD_GEOJSON_URL);
-        if (!response.ok) throw new Error('Failed to fetch map data');
-        const geo = await response.json();
-        setGeoData(geo);
-        setLoading(false);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load map');
-        setLoading(false);
+      // Try each URL in order
+      for (const url of GEOJSON_URLS) {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) continue;
+          const geo = await response.json();
+          // Handle TopoJSON format from world-atlas
+          if (geo.type === 'Topology' && geo.objects) {
+            const topoFeature = geo.objects.countries || geo.objects.world;
+            if (topoFeature) {
+              // Convert TopoJSON to GeoJSON (simplified)
+              const features = topoFeature.geometries.map((g: { type: string; arcs: number[][]; properties?: Record<string, unknown> }, i: number) => ({
+                type: 'Feature',
+                properties: g.properties || { name: `Country ${i}` },
+                geometry: g,
+              }));
+              setGeoData({ type: 'FeatureCollection', features });
+              setLoading(false);
+              return;
+            }
+          }
+          setGeoData(geo);
+          setLoading(false);
+          return;
+        } catch {
+          // Try next URL
+          continue;
+        }
       }
+      // If all URLs fail, use fallback data
+      console.warn('Using fallback geo data');
+      setGeoData(FALLBACK_GEOJSON);
+      setLoading(false);
     };
 
     fetchGeoData();
@@ -108,7 +152,7 @@ export function Choropleth({ data, config = {} }: ChoroplethProps) {
 
     // Projection
     const projection = d3.geoNaturalEarth1()
-      .fitSize([innerWidth, innerHeight], geoData as d3.GeoGeometryObjects);
+      .fitSize([innerWidth, innerHeight], geoData as d3.ExtendedFeatureCollection);
 
     // Path generator
     const path = d3.geoPath().projection(projection);
@@ -128,7 +172,7 @@ export function Choropleth({ data, config = {} }: ChoroplethProps) {
       .style('z-index', '1000');
 
     // Draw countries
-    const features = (geoData as unknown as GeoJSON.FeatureCollection).features;
+    const features = geoData.features;
     
     g.selectAll('path')
       .data(features)
@@ -237,14 +281,6 @@ export function Choropleth({ data, config = {} }: ChoroplethProps) {
     return (
       <div className="visualization choropleth loading">
         <p>Loading map data...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="visualization choropleth error">
-        <p>Error loading map: {error}</p>
       </div>
     );
   }

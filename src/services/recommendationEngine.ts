@@ -471,6 +471,9 @@ export function getAllVisualizationProfiles(): VisualizationProfile[] {
 // ADVANCED RECOMMENDATION ENGINE (Data Characteristics Based)
 // =============================================================================
 
+/** Encoding channel type for visualization mapping */
+type EncodingChannel = 'x' | 'y' | 'color' | 'size' | 'shape' | 'opacity' | 'text' | 'tooltip' | 'row' | 'column';
+
 /**
  * Encoding effectiveness rankings based on Mackinlay's APT
  * Lower rank = more effective for that data type
@@ -486,8 +489,6 @@ export const ENCODING_EFFECTIVENESS: Record<SemanticType, EncodingChannel[]> = {
   boolean: ['color', 'shape'],
   identifier: ['text', 'tooltip'],
 };
-
-type EncodingChannel = 'x' | 'y' | 'color' | 'size' | 'shape' | 'opacity' | 'text' | 'tooltip' | 'row' | 'column';
 
 /**
  * Mark types suitable for different data dimensionalities

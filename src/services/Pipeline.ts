@@ -368,8 +368,8 @@ export class Pipeline {
   }
 
   private applyDerive(df: DataFrame, name: string, expression: string): DataFrame {
-    // Simple expression parser for common operations
-    // Supports: column references, arithmetic, simple functions
+    // Safe expression evaluator - only supports basic arithmetic operations
+    // Does NOT use Function constructor to avoid security risks
     return df.derive(name, (row) => {
       try {
         // Replace column references with values
@@ -380,8 +380,8 @@ export class Pipeline {
           expr = expr.replace(regex, typeof value === 'string' ? `"${value}"` : String(value));
         });
         
-        // Safe evaluation using Function constructor
-        return new Function(`return ${expr}`)();
+        // Safe evaluation using a restricted arithmetic parser
+        return safeEvaluateExpression(expr);
       } catch {
         return null;
       }
@@ -633,6 +633,89 @@ export function standardize(data: Row[], column: string, alias?: string): Row[] 
     const val = row[column] as number;
     return val !== null && stdDev !== 0 ? (val - mean) / stdDev : null;
   }).rows;
+}
+
+// =============================================================================
+// SAFE EXPRESSION EVALUATOR
+// =============================================================================
+
+/**
+ * Safely evaluate basic arithmetic expressions without using eval() or Function()
+ * Supports: +, -, *, /, %, parentheses, and numeric literals
+ * This prevents code injection attacks while still allowing simple calculations
+ */
+function safeEvaluateExpression(expr: string): number | null {
+  // Remove whitespace
+  const cleaned = expr.replace(/\s+/g, '');
+  
+  // Validate that expression only contains safe characters
+  if (!/^[\d+\-*/%().]+$/.test(cleaned)) {
+    return null;
+  }
+  
+  try {
+    return parseExpression(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recursive descent parser for arithmetic expressions
+ */
+function parseExpression(expr: string): number {
+  let pos = 0;
+  
+  function parseNumber(): number {
+    let numStr = '';
+    while (pos < expr.length && (/[\d.]/.test(expr[pos]))) {
+      numStr += expr[pos++];
+    }
+    if (numStr === '') throw new Error('Expected number');
+    return parseFloat(numStr);
+  }
+  
+  function parseFactor(): number {
+    if (expr[pos] === '(') {
+      pos++; // skip '('
+      const result = parseAddSub();
+      if (expr[pos] !== ')') throw new Error('Expected )');
+      pos++; // skip ')'
+      return result;
+    }
+    if (expr[pos] === '-') {
+      pos++;
+      return -parseFactor();
+    }
+    return parseNumber();
+  }
+  
+  function parseMulDiv(): number {
+    let result = parseFactor();
+    while (pos < expr.length && /[*/%]/.test(expr[pos])) {
+      const op = expr[pos++];
+      const right = parseFactor();
+      if (op === '*') result *= right;
+      else if (op === '/') result /= right;
+      else if (op === '%') result %= right;
+    }
+    return result;
+  }
+  
+  function parseAddSub(): number {
+    let result = parseMulDiv();
+    while (pos < expr.length && /[+-]/.test(expr[pos]) && expr[pos - 1] !== '(') {
+      const op = expr[pos++];
+      const right = parseMulDiv();
+      if (op === '+') result += right;
+      else if (op === '-') result -= right;
+    }
+    return result;
+  }
+  
+  const result = parseAddSub();
+  if (pos !== expr.length) throw new Error('Unexpected character');
+  return result;
 }
 
 export default Pipeline;
